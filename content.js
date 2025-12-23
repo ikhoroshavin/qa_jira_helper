@@ -115,9 +115,10 @@ function splitExistingAndMissing(subtasks, targets) {
   const missing = [];
 
   targets.forEach(target => {
-    const found = subtasks.find(
-      st => (st.fields?.summary || st.summary || "").startsWith(`${target.prefix} `)
-    );
+    const found = subtasks.find(st => {
+      const summary = st.fields?.summary || st.summary || "";
+      return summary.startsWith(`${target.prefix} `);
+    });
     if (found) {
       existing.push({ ...target, key: found.key || found.id });
     } else {
@@ -147,6 +148,13 @@ function buildCreationMessage(created, existing, errors) {
   }
 
   return parts.join(". ");
+}
+
+function filterSubtasksByTargets(subtasks, targets) {
+  return subtasks.filter(st => {
+    const summary = st.fields?.summary || st.summary || "";
+    return targets.some(t => summary.startsWith(t.prefix));
+  });
 }
 
 /* -----------------------------
@@ -507,10 +515,7 @@ async function convertQASubtasks(button) {
   try {
     const issue = await getIssueData(issueKey);
     const subtasks = issue.fields.subtasks || [];
-    const targets = subtasks.filter(st => {
-      const summary = st.fields?.summary || "";
-      return summary.startsWith("[Тестирование]") || summary.startsWith("[Документация]");
-    });
+    const targets = filterSubtasksByTargets(subtasks, TARGET_SUBTASKS);
 
     if (!targets.length) {
       showNotification("Подходящие подзадачи не найдены", "warning");
