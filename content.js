@@ -18,6 +18,18 @@ function getJiraBaseUrl() {
 -------------------------------------------*/
 const ISSUE_KEY_REGEX = /([A-Z0-9]+-\d+)/;
 
+function isLikelyIssueContext() {
+  const { pathname, hash } = window.location;
+
+  if (/\/(browse|issues)\//.test(pathname)) return true;
+  if (ISSUE_KEY_REGEX.test(hash || "")) return true;
+
+  return pathname
+    .split("/")
+    .filter(Boolean)
+    .some(segment => ISSUE_KEY_REGEX.test(segment));
+}
+
 function detectIssueKey() {
   const { href, pathname, hash } = window.location;
 
@@ -538,7 +550,9 @@ async function convertQASubtasks(button) {
 function addButtons() {
   const { key: issueKey, error: issueKeyError } = detectIssueKey();
   if (!issueKey) {
-    notifyIssueKeyError(issueKeyError);
+    if (isLikelyIssueContext()) {
+      notifyIssueKeyError(issueKeyError);
+    }
     return;
   }
 
