@@ -491,10 +491,8 @@ async function convertSubtaskToIssue(issueKey, targetIssueTypeId) {
     credentials: 'include',
     body: JSON.stringify({
       fields: {
-        issuetype: { id: targetIssueTypeId }
-      },
-      update: {
-        parent: [{ set: null }]
+        issuetype: { id: targetIssueTypeId },
+        parent: null
       }
     })
   });
