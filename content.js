@@ -86,23 +86,92 @@ function notifyIssueKeyError(error) {
   }
 }
 
+let lastIssueKeyError = null;
+let lastIssueKeyErrorHref = null;
+
+function notifyIssueKeyError(error) {
+  if (!error) return;
+
+  const currentHref = window.location.href;
+  const alreadyShown = lastIssueKeyError === error && lastIssueKeyErrorHref === currentHref;
+
+  if (!alreadyShown) {
+    showNotification(error, "error");
+    console.warn(`[Jira QA Helper] ${error}`);
+    lastIssueKeyError = error;
+    lastIssueKeyErrorHref = currentHref;
+  }
+}
+
+const TARGET_SUBTASKS = [
+  { title: "Тестирование", prefix: "[Тестирование]" },
+  { title: "Документация", prefix: "[Документация]" }
+];
+
 /* -----------------------------
    Получение данных задачи
 ------------------------------*/
 async function getIssueData(issueKey) {
   const baseUrl = getJiraBaseUrl();
 
-  const response = await fetch(`${baseUrl}/rest/api/3/issue/${issueKey}`, {
+  const response = await fetch(`${baseUrl}/rest/api/3/issue/${issueKey}?fields=summary,project,subtasks`, {
     method: 'GET',
     headers: { 'Accept': 'application/json' },
     credentials: 'include'
   });
 
   if (!response.ok) {
-    throw new Error(`Ошибка получения данных задачи: ${response.status}`);
+    throw new Error(`Ошибка получения данных задачи: ${response.status} - ${await response.text()}`);
   }
 
   return await response.json();
+}
+
+function splitExistingAndMissing(subtasks, targets) {
+  const existing = [];
+  const missing = [];
+
+  targets.forEach(target => {
+    const found = subtasks.find(st => {
+      const summary = st.fields?.summary || st.summary || "";
+      return summary.startsWith(`${target.prefix} `);
+    });
+    if (found) {
+      existing.push({ ...target, key: found.key || found.id });
+    } else {
+      missing.push(target);
+    }
+  });
+
+  return { existing, missing };
+}
+
+function buildCreationMessage(created, existing, errors) {
+  const parts = [];
+
+  if (created.length) {
+    parts.push(`Созданы: ${created.map(c => `${c.title} (${c.key})`).join(", ")}`);
+  }
+
+  if (existing.length) {
+    parts.push(`Пропущены (уже есть): ${existing.map(e => `${e.title} (${e.key})`).join(", ")}`);
+  }
+
+  if (errors.length) {
+    parts.push(
+      `Ошибки: ${errors.map(e => `${e.title} — ${e.message}`).join("; ")}. ` +
+      "Повторите создание для неуспешных или удалите созданные подзадачи перед повтором."
+    );
+  }
+
+  return parts.join(". ");
+}
+
+function filterSubtasksByTargets(subtasks, targets) {
+  return subtasks.filter(st => {
+    const summary = st.fields?.summary || st.summary || "";
+    return targets.some(t => summary.startsWith(t.prefix));
+  });
 }
 
 /* -----------------------------
@@ -306,6 +375,7 @@ async function createQASubtasks(button) {
     return;
   }
 
+  const defaultButtonText = "➕ Создать QA подзадачи";
   button.disabled = true;
   button.textContent = "Создание...";
 
@@ -314,6 +384,7 @@ async function createQASubtasks(button) {
     const summary = issue.fields.summary;
     const projectId = issue.fields.project.id;
     const projectKey = issue.fields.project.key;
+    const subtasks = issue.fields.subtasks || [];
 
     const qaType = await getQASubtaskTypeId(projectKey);
     const currentUser = await getCurrentUser();
@@ -323,13 +394,29 @@ async function createQASubtasks(button) {
     const t = await createSubtask(issueKey, `[Тестирование] ${summary}`, qaType, projectId, assignee);
     const d = await createSubtask(issueKey, `[Документация] ${summary}`, qaType, projectId, assignee);
 
-    showNotification(`Созданы: ${t.key}, ${d.key}`, "success");
-    setTimeout(() => location.reload(), 1500);
+    const message = buildCreationMessage(created, existing, errors);
+
+    if (errors.length) {
+      showNotification(message, "warning");
+      button.disabled = false;
+      button.textContent = defaultButtonText;
+      return;
+    }
+
+    const finalMessage = message || "Нет действий: подзадачи не были созданы.";
+    showNotification(finalMessage, existing.length ? "info" : "success");
+
+    if (created.length) {
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      button.disabled = false;
+      button.textContent = defaultButtonText;
+    }
 
   } catch (e) {
     showNotification(e.message, "error");
     button.disabled = false;
-    button.textContent = "➕ Создать QA подзадачи";
+    button.textContent = defaultButtonText;
   }
 }
 
