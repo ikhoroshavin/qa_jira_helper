@@ -400,11 +400,14 @@ function addButtons() {
 
   if (document.querySelector(".jira-qa-helper-buttons")) return;
 
-  const header = document.querySelector('[data-testid="issue.views.issue-base.foundation.summary.heading"]')
+  const header = document.querySelector('[role="heading"][data-testid="issue.views.issue-base.foundation.summary.heading"]')
+    || document.querySelector('[data-testid="issue.views.issue-base.foundation.summary.heading"]')
+    || document.querySelector('[role="heading"][data-testid*="summary"]')
+    || document.querySelector('[role="heading"][aria-level="1"]')
     || document.querySelector('#summary-val')
     || document.querySelector('h1[id^="summary"]');
 
-  if (!header) return;
+  if (!header || !header.parentElement) return;
 
   const box = document.createElement("div");
   box.className = "jira-qa-helper-buttons";
@@ -428,20 +431,23 @@ function addButtons() {
    Инициализация
 ------------------------------*/
 function init() {
+  let lastHref = location.href;
+
   addButtons();
 
-  new MutationObserver(addButtons).observe(document.body, {
+  new MutationObserver(() => {
+    const currentHref = location.href;
+
+    if (currentHref !== lastHref) {
+      lastHref = currentHref;
+      setTimeout(addButtons, 400);
+    }
+
+    addButtons();
+  }).observe(document.body, {
     childList: true,
     subtree: true
   });
-
-  let last = location.href;
-  new MutationObserver(() => {
-    if (location.href !== last) {
-      last = location.href;
-      setTimeout(addButtons, 400);
-    }
-  }).observe(document, { subtree: true, childList: true });
 }
 
 if (document.readyState === "loading") {
