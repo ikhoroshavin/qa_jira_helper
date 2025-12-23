@@ -344,6 +344,9 @@ async function getStandardIssueTypeId(projectKey) {
     throw new Error('Доступные типы задач для конвертации не найдены');
   }
 
+  const qaType = nonSubtaskTypes.find(t => t.name.trim().toLowerCase() === "qa");
+  if (qaType) return qaType.id;
+
   const taskType = nonSubtaskTypes.find(t => t.name.trim().toLowerCase() === "task");
   return (taskType || nonSubtaskTypes[0]).id;
 }
@@ -443,18 +446,15 @@ function showNotification(message, type = "info") {
 async function convertSubtaskToIssue(issueKey, targetIssueTypeId) {
   const baseUrl = getJiraBaseUrl();
 
-  const response = await fetch(`${baseUrl}/rest/api/3/issue/${issueKey}`, {
-    method: 'PUT',
+  const response = await fetch(`${baseUrl}/rest/api/3/issue/${issueKey}/issueType`, {
+    method: 'POST',
     headers: {
       'Accept': 'application/json',
       'Content-Type': 'application/json'
     },
     credentials: 'include',
     body: JSON.stringify({
-      fields: {
-        issuetype: { id: targetIssueTypeId },
-        parent: null
-      }
+      issueTypeId: targetIssueTypeId
     })
   });
 
