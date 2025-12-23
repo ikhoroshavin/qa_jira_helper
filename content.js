@@ -157,6 +157,41 @@ async function getQASubtaskTypeId(projectKey) {
 }
 
 /* -----------------------------
+   Получение ID типа задачи для конвертации
+------------------------------*/
+async function getStandardIssueTypeId(projectKey) {
+  const baseUrl = getJiraBaseUrl();
+
+  const response = await fetch(
+    `${baseUrl}/rest/api/3/issue/createmeta?projectKeys=${projectKey}&expand=projects.issuetypes`,
+    {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      credentials: 'include'
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Ошибка получения типов задач: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const project = data.projects?.[0];
+
+  if (!project) {
+    throw new Error('Проект не найден');
+  }
+
+  const nonSubtaskTypes = project.issuetypes.filter(t => !t.subtask);
+  if (!nonSubtaskTypes.length) {
+    throw new Error('Доступные типы задач для конвертации не найдены');
+  }
+
+  const taskType = nonSubtaskTypes.find(t => t.name.trim().toLowerCase() === "task");
+  return (taskType || nonSubtaskTypes[0]).id;
+}
+
+/* -----------------------------
    Создание QA-подзадач с назначением текущего пользователя
 ------------------------------*/
 async function createQASubtasks(button) {
@@ -208,6 +243,101 @@ function showNotification(message, type = "info") {
 }
 
 /* -----------------------------
+   Конвертация подзадачи в задачу
+------------------------------*/
+async function convertSubtaskToIssue(issueKey, targetIssueTypeId) {
+  const baseUrl = getJiraBaseUrl();
+
+  const response = await fetch(`${baseUrl}/rest/api/3/issue/${issueKey}`, {
+    method: 'PUT',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json'
+    },
+    credentials: 'include',
+    body: JSON.stringify({
+      fields: {
+        issuetype: { id: targetIssueTypeId },
+        parent: null
+      }
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Ошибка конвертации ${issueKey}: ${response.status} - ${await response.text()}`);
+  }
+}
+
+/* -----------------------------
+   Создание линка между задачами
+------------------------------*/
+async function createRelatesLink(sourceKey, targetKey) {
+  const baseUrl = getJiraBaseUrl();
+
+  const response = await fetch(`${baseUrl}/rest/api/3/issueLink`, {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json'
+    },
+    credentials: 'include',
+    body: JSON.stringify({
+      type: { name: "Relates" },
+      inwardIssue: { key: sourceKey },
+      outwardIssue: { key: targetKey }
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Ошибка линкования ${sourceKey} и ${targetKey}: ${response.status} - ${await response.text()}`);
+  }
+}
+
+/* -----------------------------
+   Конвертация QA-подзадач
+------------------------------*/
+async function convertQASubtasks(button) {
+  const issueKey = getCurrentIssueKey();
+  if (!issueKey) return showNotification("Не удалось определить ключ задачи", "error");
+
+  button.disabled = true;
+  button.textContent = "Конвертация...";
+
+  try {
+    const issue = await getIssueData(issueKey);
+    const subtasks = issue.fields.subtasks || [];
+    const targets = subtasks.filter(st => {
+      const summary = st.fields?.summary || "";
+      return summary.startsWith("[Тестирование]") || summary.startsWith("[Документация]");
+    });
+
+    if (!targets.length) {
+      showNotification("Подходящие подзадачи не найдены", "warning");
+      button.disabled = false;
+      button.textContent = "🔄 Конвертировать подзадачи";
+      return;
+    }
+
+    const projectKey = issue.fields.project.key;
+    const targetTypeId = await getStandardIssueTypeId(projectKey);
+
+    const convertedKeys = [];
+    for (const subtask of targets) {
+      await convertSubtaskToIssue(subtask.key, targetTypeId);
+      await createRelatesLink(subtask.key, issueKey);
+      convertedKeys.push(subtask.key);
+    }
+
+    showNotification(`Сконвертированы и связаны: ${convertedKeys.join(", ")}`, "success");
+    setTimeout(() => location.reload(), 1500);
+  } catch (e) {
+    showNotification(e.message, "error");
+    button.disabled = false;
+    button.textContent = "🔄 Конвертировать подзадачи";
+  }
+}
+
+/* -----------------------------
    Добавление кнопок на страницу
 ------------------------------*/
 function addButtons() {
@@ -230,7 +360,13 @@ function addButtons() {
   btnCreate.textContent = "➕ Создать QA подзадачи";
   btnCreate.onclick = () => createQASubtasks(btnCreate);
 
+  const btnConvert = document.createElement("button");
+  btnConvert.className = "jira-qa-helper-button jira-qa-helper-button-convert";
+  btnConvert.textContent = "🔄 Конвертировать подзадачи";
+  btnConvert.onclick = () => convertQASubtasks(btnConvert);
+
   box.appendChild(btnCreate);
+  box.appendChild(btnConvert);
   header.parentElement.insertBefore(box, header.nextSibling);
 }
 
