@@ -328,8 +328,37 @@ async function getQASubtaskTypeId(projectKey) {
 /* -----------------------------
    Получение ID типа задачи для конвертации
 ------------------------------*/
-async function getStandardIssueTypeId(projectKey) {
+function pickStandardIssueType(types) {
+  const nonSubtaskTypes = types.filter(t => !t.subtask);
+  if (!nonSubtaskTypes.length) return null;
+
+  const byName = name => nonSubtaskTypes.find(t => t.name.trim().toLowerCase() === name);
+
+  return byName("qa") || byName("task") || nonSubtaskTypes[0];
+}
+
+async function getStandardIssueTypeId(issueKey, projectKey) {
   const baseUrl = getJiraBaseUrl();
+
+  try {
+    const response = await fetch(`${baseUrl}/rest/api/3/issue/${issueKey}/editmeta`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      credentials: 'include'
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      const allowedTypes = data.fields?.issuetype?.allowedValues || [];
+      const pick = pickStandardIssueType(allowedTypes);
+
+      if (pick) return pick.id;
+    } else {
+      console.warn(`[Jira QA Helper] editmeta request failed: ${response.status}`);
+    }
+  } catch (e) {
+    console.warn(`[Jira QA Helper] editmeta request error: ${e.message}`);
+  }
 
   const response = await fetch(
     `${baseUrl}/rest/api/3/issue/createmeta?projectKeys=${projectKey}&expand=projects.issuetypes`,
@@ -351,16 +380,11 @@ async function getStandardIssueTypeId(projectKey) {
     throw new Error('Проект не найден');
   }
 
-  const nonSubtaskTypes = project.issuetypes.filter(t => !t.subtask);
-  if (!nonSubtaskTypes.length) {
-    throw new Error('Доступные типы задач для конвертации не найдены');
-  }
+  const pick = pickStandardIssueType(project.issuetypes || []);
 
-  const qaType = nonSubtaskTypes.find(t => t.name.trim().toLowerCase() === "qa");
-  if (qaType) return qaType.id;
+  if (pick) return pick.id;
 
-  const taskType = nonSubtaskTypes.find(t => t.name.trim().toLowerCase() === "task");
-  return (taskType || nonSubtaskTypes[0]).id;
+  throw new Error('Доступные типы задач для конвертации не найдены');
 }
 
 /* -----------------------------
@@ -467,10 +491,8 @@ async function convertSubtaskToIssue(issueKey, targetIssueTypeId) {
     credentials: 'include',
     body: JSON.stringify({
       fields: {
-        issuetype: { id: targetIssueTypeId }
-      },
-      update: {
-        parent: [{ set: null }]
+        issuetype: { id: targetIssueTypeId },
+        parent: null
       }
     })
   });
@@ -531,7 +553,7 @@ async function convertQASubtasks(button) {
     }
 
     const projectKey = issue.fields.project.key;
-    const targetTypeId = await getStandardIssueTypeId(projectKey);
+    const targetTypeId = await getStandardIssueTypeId(issueKey, projectKey);
 
     const convertedKeys = [];
     for (const subtask of targets) {
