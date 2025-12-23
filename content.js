@@ -86,23 +86,6 @@ function notifyIssueKeyError(error) {
   }
 }
 
-let lastIssueKeyError = null;
-let lastIssueKeyErrorHref = null;
-
-function notifyIssueKeyError(error) {
-  if (!error) return;
-
-  const currentHref = window.location.href;
-  const alreadyShown = lastIssueKeyError === error && lastIssueKeyErrorHref === currentHref;
-
-  if (!alreadyShown) {
-    showNotification(error, "error");
-    console.warn(`[Jira QA Helper] ${error}`);
-    lastIssueKeyError = error;
-    lastIssueKeyErrorHref = currentHref;
-  }
-}
-
 const TARGET_SUBTASKS = [
   { title: "Тестирование", prefix: "[Тестирование]" },
   { title: "Документация", prefix: "[Документация]" }
@@ -391,8 +374,24 @@ async function createQASubtasks(button) {
     const deploymentType = await getDeploymentType();
     const assignee = buildAssigneeField(currentUser, deploymentType);
 
-    const t = await createSubtask(issueKey, `[Тестирование] ${summary}`, qaType, projectId, assignee);
-    const d = await createSubtask(issueKey, `[Документация] ${summary}`, qaType, projectId, assignee);
+    const { existing, missing } = splitExistingAndMissing(subtasks, TARGET_SUBTASKS);
+    const created = [];
+    const errors = [];
+
+    for (const target of missing) {
+      try {
+        const result = await createSubtask(
+          issueKey,
+          `${target.prefix} ${summary}`,
+          qaType,
+          projectId,
+          assignee
+        );
+        created.push({ ...target, key: result.key || result.id });
+      } catch (e) {
+        errors.push({ ...target, message: e.message });
+      }
+    }
 
     const message = buildCreationMessage(created, existing, errors);
 
