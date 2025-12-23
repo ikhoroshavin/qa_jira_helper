@@ -99,7 +99,7 @@ async function getIssueData(issueKey) {
   });
 
   if (!response.ok) {
-    throw new Error(`Ошибка получения данных задачи: ${response.status}`);
+    throw new Error(`Ошибка получения данных задачи: ${response.status} - ${await response.text()}`);
   }
 
   return await response.json();
@@ -394,7 +394,8 @@ async function createQASubtasks(button) {
       return;
     }
 
-    showNotification(message, existing.length ? "info" : "success");
+    const finalMessage = message || "Нет действий: подзадачи не были созданы.";
+    showNotification(finalMessage, existing.length ? "info" : "success");
 
     if (created.length) {
       setTimeout(() => location.reload(), 1500);
@@ -530,9 +531,8 @@ async function convertQASubtasks(button) {
    Добавление кнопок на страницу
 ------------------------------*/
 function addButtons() {
-  const { key: issueKey, error: issueKeyError } = detectIssueKey();
+  const issueKey = getCurrentIssueKey({ notify: true });
   if (!issueKey) {
-    notifyIssueKeyError(issueKeyError);
     return;
   }
 
