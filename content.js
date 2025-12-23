@@ -40,7 +40,7 @@ function getCurrentIssueKey() {
 async function getIssueData(issueKey) {
   const baseUrl = getJiraBaseUrl();
 
-  const response = await fetch(`${baseUrl}/rest/api/3/issue/${issueKey}`, {
+  const response = await fetch(`${baseUrl}/rest/api/3/issue/${issueKey}?fields=summary,project,subtasks`, {
     method: 'GET',
     headers: { 'Accept': 'application/json' },
     credentials: 'include'
@@ -163,6 +163,7 @@ async function createQASubtasks(button) {
   const issueKey = getCurrentIssueKey();
   if (!issueKey) return showNotification("Не удалось определить ключ задачи", "error");
 
+  const defaultButtonText = "➕ Создать QA подзадачи";
   button.disabled = true;
   button.textContent = "Создание...";
 
@@ -171,21 +172,97 @@ async function createQASubtasks(button) {
     const summary = issue.fields.summary;
     const projectId = issue.fields.project.id;
     const projectKey = issue.fields.project.key;
+    const subtasks = issue.fields.subtasks || [];
 
     const qaType = await getQASubtaskTypeId(projectKey);
     const currentUser = await getCurrentUser();
     const assigneeId = currentUser.accountId;
 
-    const t = await createSubtask(issueKey, `[Тестирование] ${summary}`, qaType, projectId, assigneeId);
-    const d = await createSubtask(issueKey, `[Документация] ${summary}`, qaType, projectId, assigneeId);
+    const targets = [
+      { title: "Тестирование", prefix: "[Тестирование]" },
+      { title: "Документация", prefix: "[Документация]" }
+    ];
 
-    showNotification(`Созданы: ${t.key}, ${d.key}`, "success");
-    setTimeout(() => location.reload(), 1500);
+    const existing = targets
+      .map(target => {
+        const found = subtasks.find(
+          st => (st.fields?.summary || st.summary || "").startsWith(`${target.prefix} `)
+        );
+        return found ? { ...target, key: found.key || found.id } : null;
+      })
+      .filter(Boolean);
+
+    if (existing.length === targets.length) {
+      showNotification(
+        `Подзадачи уже существуют: ${existing.map(e => `${e.title} (${e.key})`).join(", ")}`,
+        "info"
+      );
+      button.disabled = false;
+      button.textContent = defaultButtonText;
+      return;
+    }
+
+    const toCreate = targets.filter(
+      target => !existing.find(e => e.title === target.title)
+    );
+
+    const created = [];
+    const errors = [];
+
+    for (const target of toCreate) {
+      try {
+        const result = await createSubtask(
+          issueKey,
+          `${target.prefix} ${summary}`,
+          qaType,
+          projectId,
+          assigneeId
+        );
+        created.push({ ...target, key: result.key });
+      } catch (error) {
+        errors.push({ ...target, message: error.message });
+      }
+    }
+
+    const parts = [];
+
+    if (created.length) {
+      parts.push(`Созданы: ${created.map(c => `${c.title} (${c.key})`).join(", ")}`);
+    }
+
+    if (existing.length) {
+      parts.push(`Пропущены (уже есть): ${existing.map(e => `${e.title} (${e.key})`).join(", ")}`);
+    }
+
+    if (errors.length) {
+      parts.push(
+        `Ошибки: ${errors.map(e => `${e.title} — ${e.message}`).join("; ")}. ` +
+        "Повторите создание для неуспешных или удалите созданные подзадачи перед повтором."
+      );
+    }
+
+    const message = parts.join(". ");
+
+    if (errors.length) {
+      showNotification(message, "warning");
+      button.disabled = false;
+      button.textContent = defaultButtonText;
+      return;
+    }
+
+    showNotification(message, existing.length ? "info" : "success");
+
+    if (created.length) {
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      button.disabled = false;
+      button.textContent = defaultButtonText;
+    }
 
   } catch (e) {
     showNotification(e.message, "error");
     button.disabled = false;
-    button.textContent = "➕ Создать QA подзадачи";
+    button.textContent = defaultButtonText;
   }
 }
 
