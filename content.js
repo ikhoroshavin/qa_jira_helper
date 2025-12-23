@@ -16,22 +16,74 @@ function getJiraBaseUrl() {
 /* -----------------------------------------
    Получение ключа текущей задачи из URL
 -------------------------------------------*/
-function getCurrentIssueKey() {
-  const url = window.location.href;
+const ISSUE_KEY_REGEX = /([A-Z0-9]+-\d+)/;
 
-  let match = url.match(/\/issues\/([A-Z0-9]+-\d+)/);
-  if (match) return match[1];
+function detectIssueKey() {
+  const { href, pathname, hash } = window.location;
 
-  match = url.match(/\/browse\/([A-Z0-9]+-\d+)/);
-  if (match) return match[1];
+  const browseMatch = pathname.match(/\/browse\/([A-Z0-9]+-\d+)(?=\/|$)/);
+  if (browseMatch) return { key: browseMatch[1] };
 
-  match = window.location.hash.match(/([A-Z0-9]+-\d+)/);
-  if (match) return match[1];
+  const issuesMatch = pathname.match(/\/issues\/([A-Z0-9]+-\d+)(?=\/|$)/);
+  if (issuesMatch) return { key: issuesMatch[1] };
 
-  match = url.match(/([A-Z0-9]+-\d+)/);
-  if (match) return match[1];
+  const hashMatch = (hash || "").match(ISSUE_KEY_REGEX);
+  if (hashMatch) return { key: hashMatch[1] };
 
-  return null;
+  const pathMatches = Array.from(new Set(
+    pathname
+      .split("/")
+      .filter(Boolean)
+      .map(segment => {
+        const match = segment.match(ISSUE_KEY_REGEX);
+        return match ? match[1] : null;
+      })
+      .filter(Boolean)
+  ));
+
+  if (pathMatches.length === 1) return { key: pathMatches[0] };
+  if (pathMatches.length > 1) {
+    return { key: null, error: "Найдено несколько возможных ключей задачи в URL" };
+  }
+
+  const urlMatches = Array.from(
+    new Set(href.match(new RegExp(ISSUE_KEY_REGEX.source, "g")) || [])
+  );
+
+  if (urlMatches.length === 1) return { key: urlMatches[0] };
+  if (urlMatches.length > 1) {
+    return { key: null, error: "Найдено несколько возможных ключей задачи в URL" };
+  }
+
+  return { key: null, error: "Не удалось определить ключ задачи" };
+}
+
+function getCurrentIssueKey(options = {}) {
+  const { notify = false } = options;
+  const { key, error } = detectIssueKey();
+
+  if (!key && notify) {
+    notifyIssueKeyError(error);
+  }
+
+  return key;
+}
+
+let lastIssueKeyError = null;
+let lastIssueKeyErrorHref = null;
+
+function notifyIssueKeyError(error) {
+  if (!error) return;
+
+  const currentHref = window.location.href;
+  const alreadyShown = lastIssueKeyError === error && lastIssueKeyErrorHref === currentHref;
+
+  if (!alreadyShown) {
+    showNotification(error, "error");
+    console.warn(`[Jira QA Helper] ${error}`);
+    lastIssueKeyError = error;
+    lastIssueKeyErrorHref = currentHref;
+  }
 }
 
 /* -----------------------------
@@ -248,8 +300,11 @@ async function getStandardIssueTypeId(projectKey) {
    Создание QA-подзадач с назначением текущего пользователя
 ------------------------------*/
 async function createQASubtasks(button) {
-  const issueKey = getCurrentIssueKey();
-  if (!issueKey) return showNotification("Не удалось определить ключ задачи", "error");
+  const { key: issueKey, error: issueKeyError } = detectIssueKey();
+  if (!issueKey) {
+    notifyIssueKeyError(issueKeyError);
+    return;
+  }
 
   button.disabled = true;
   button.textContent = "Создание...";
@@ -395,8 +450,14 @@ async function convertQASubtasks(button) {
    Добавление кнопок на страницу
 ------------------------------*/
 function addButtons() {
-  const issueKey = getCurrentIssueKey();
-  if (!issueKey) return;
+  const { key: issueKey, error: issueKeyError } = detectIssueKey();
+  if (!issueKey) {
+    notifyIssueKeyError(issueKeyError);
+    return;
+  }
+
+  lastIssueKeyError = null;
+  lastIssueKeyErrorHref = null;
 
   if (document.querySelector(".jira-qa-helper-buttons")) return;
 
