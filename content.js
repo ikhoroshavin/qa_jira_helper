@@ -86,6 +86,23 @@ function notifyIssueKeyError(error) {
   }
 }
 
+let lastIssueKeyError = null;
+let lastIssueKeyErrorHref = null;
+
+function notifyIssueKeyError(error) {
+  if (!error) return;
+
+  const currentHref = window.location.href;
+  const alreadyShown = lastIssueKeyError === error && lastIssueKeyErrorHref === currentHref;
+
+  if (!alreadyShown) {
+    showNotification(error, "error");
+    console.warn(`[Jira QA Helper] ${error}`);
+    lastIssueKeyError = error;
+    lastIssueKeyErrorHref = currentHref;
+  }
+}
+
 const TARGET_SUBTASKS = [
   { title: "Тестирование", prefix: "[Тестирование]" },
   { title: "Документация", prefix: "[Документация]" }
@@ -374,35 +391,8 @@ async function createQASubtasks(button) {
     const deploymentType = await getDeploymentType();
     const assignee = buildAssigneeField(currentUser, deploymentType);
 
-    const { existing, missing } = splitExistingAndMissing(subtasks, TARGET_SUBTASKS);
-
-    if (existing.length === TARGET_SUBTASKS.length) {
-      showNotification(
-        `Подзадачи уже существуют: ${existing.map(e => `${e.title} (${e.key})`).join(", ")}`,
-        "info"
-      );
-      button.disabled = false;
-      button.textContent = defaultButtonText;
-      return;
-    }
-
-    const created = [];
-    const errors = [];
-
-    for (const target of missing) {
-      try {
-        const result = await createSubtask(
-          issueKey,
-          `${target.prefix} ${summary}`,
-          qaType,
-          projectId,
-          assignee
-        );
-        created.push({ ...target, key: result.key });
-      } catch (error) {
-        errors.push({ ...target, message: error.message });
-      }
-    }
+    const t = await createSubtask(issueKey, `[Тестирование] ${summary}`, qaType, projectId, assignee);
+    const d = await createSubtask(issueKey, `[Документация] ${summary}`, qaType, projectId, assignee);
 
     const message = buildCreationMessage(created, existing, errors);
 
@@ -503,11 +493,8 @@ async function createRelatesLink(sourceKey, targetKey) {
    Конвертация QA-подзадач
 ------------------------------*/
 async function convertQASubtasks(button) {
-  const { key: issueKey, error: issueKeyError } = detectIssueKey();
-  if (!issueKey) {
-    notifyIssueKeyError(issueKeyError);
-    return;
-  }
+  const issueKey = getCurrentIssueKey();
+  if (!issueKey) return showNotification("Не удалось определить ключ задачи", "error");
 
   button.disabled = true;
   button.textContent = "Конвертация...";
@@ -515,7 +502,10 @@ async function convertQASubtasks(button) {
   try {
     const issue = await getIssueData(issueKey);
     const subtasks = issue.fields.subtasks || [];
-    const targets = filterSubtasksByTargets(subtasks, TARGET_SUBTASKS);
+    const targets = subtasks.filter(st => {
+      const summary = st.fields?.summary || "";
+      return summary.startsWith("[Тестирование]") || summary.startsWith("[Документация]");
+    });
 
     if (!targets.length) {
       showNotification("Подходящие подзадачи не найдены", "warning");
@@ -547,8 +537,9 @@ async function convertQASubtasks(button) {
    Добавление кнопок на страницу
 ------------------------------*/
 function addButtons() {
-  const issueKey = getCurrentIssueKey({ notify: true });
+  const { key: issueKey, error: issueKeyError } = detectIssueKey();
   if (!issueKey) {
+    notifyIssueKeyError(issueKeyError);
     return;
   }
 
