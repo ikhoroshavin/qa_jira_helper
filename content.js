@@ -74,7 +74,7 @@ async function getCurrentUser() {
 /* -----------------------------
    Создание подзадачи
 ------------------------------*/
-async function createSubtask(parentKey, summary, issueTypeId, projectId, assigneeAccountId) {
+async function createSubtask(parentKey, summary, issueTypeId, projectId, assignee) {
   const baseUrl = getJiraBaseUrl();
 
   const payload = {
@@ -83,7 +83,7 @@ async function createSubtask(parentKey, summary, issueTypeId, projectId, assigne
       parent: { key: parentKey },
       summary: summary,
       issuetype: { id: issueTypeId },
-      assignee: { id: assigneeAccountId }
+      assignee
     }
   };
 
@@ -102,6 +102,59 @@ async function createSubtask(parentKey, summary, issueTypeId, projectId, assigne
   }
 
   return await response.json();
+}
+
+/* -----------------------------
+   Определение режима (Cloud/Server/DC)
+------------------------------*/
+let deploymentTypeCache = null;
+
+async function getDeploymentType() {
+  if (deploymentTypeCache) return deploymentTypeCache;
+
+  const baseUrl = getJiraBaseUrl();
+
+  try {
+    const response = await fetch(`${baseUrl}/rest/api/3/serverInfo`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      credentials: 'include'
+    });
+
+    if (!response.ok) {
+      throw new Error(`status ${response.status}`);
+    }
+
+    const data = await response.json();
+    deploymentTypeCache = data?.deploymentType?.toLowerCase() || 'unknown';
+  } catch (e) {
+    deploymentTypeCache = 'unknown';
+  }
+
+  return deploymentTypeCache;
+}
+
+/* -----------------------------
+   Подготовка ассайни для разных режимов
+------------------------------*/
+function buildAssigneeField(user, deploymentType) {
+  if (deploymentType === 'cloud' && user.accountId) {
+    return { accountId: user.accountId };
+  }
+
+  if ((deploymentType === 'server' || deploymentType === 'datacenter') && user.name) {
+    return { name: user.name };
+  }
+
+  if ((deploymentType === 'server' || deploymentType === 'datacenter') && user.key) {
+    return { key: user.key };
+  }
+
+  if (user.accountId) return { accountId: user.accountId };
+  if (user.name) return { name: user.name };
+  if (user.key) return { key: user.key };
+
+  throw new Error('Не удалось определить исполнителя для подзадачи');
 }
 
 /* -----------------------------
@@ -174,10 +227,11 @@ async function createQASubtasks(button) {
 
     const qaType = await getQASubtaskTypeId(projectKey);
     const currentUser = await getCurrentUser();
-    const assigneeId = currentUser.accountId;
+    const deploymentType = await getDeploymentType();
+    const assignee = buildAssigneeField(currentUser, deploymentType);
 
-    const t = await createSubtask(issueKey, `[Тестирование] ${summary}`, qaType, projectId, assigneeId);
-    const d = await createSubtask(issueKey, `[Документация] ${summary}`, qaType, projectId, assigneeId);
+    const t = await createSubtask(issueKey, `[Тестирование] ${summary}`, qaType, projectId, assignee);
+    const d = await createSubtask(issueKey, `[Документация] ${summary}`, qaType, projectId, assignee);
 
     showNotification(`Созданы: ${t.key}, ${d.key}`, "success");
     setTimeout(() => location.reload(), 1500);
