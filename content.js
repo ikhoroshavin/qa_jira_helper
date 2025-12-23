@@ -458,15 +458,20 @@ function showNotification(message, type = "info") {
 async function convertSubtaskToIssue(issueKey, targetIssueTypeId) {
   const baseUrl = getJiraBaseUrl();
 
-  const response = await fetch(`${baseUrl}/rest/api/3/issue/${issueKey}/issueType`, {
-    method: 'POST',
+  const response = await fetch(`${baseUrl}/rest/api/3/issue/${issueKey}`, {
+    method: 'PUT',
     headers: {
       'Accept': 'application/json',
       'Content-Type': 'application/json'
     },
     credentials: 'include',
     body: JSON.stringify({
-      issueTypeId: targetIssueTypeId
+      fields: {
+        issuetype: { id: targetIssueTypeId }
+      },
+      update: {
+        parent: [{ set: null }]
+      }
     })
   });
 
